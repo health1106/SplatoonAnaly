@@ -84,10 +84,10 @@
         const canvasDeath = document.getElementById('canvasDeath');
         const canvasKill = document.getElementById('canvasKill');
 
-        // 1920x1080基準の各テロップの正確な文字位置
+        // 1920x1080基準の各テロップの正確な文字位置（へるすさんの画像サイズに同期）
         const BASE_WIDTH = 1920;
-        const BASE_ROI_DEATH = { x: 700, y: 345, w: 500, h: 220  }; 
-        const BASE_ROI_KILL  = { x: 800, y: 995, w: 50, h: 40}; // 👈 横幅50、縦幅40ピクセルになっている
+        const BASE_ROI_DEATH = { x: 901, y: 433, w: 117, h: 41 }; // 👈 横117, 縦41 に変更
+        const BASE_ROI_KILL  = { x: 911, y: 933, w: 98,  h: 29 }; // 👈 横98,  縦29 に変更
 
         const analysisData = [];
         let isAnalyzing = false;
