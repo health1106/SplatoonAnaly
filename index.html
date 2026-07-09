@@ -146,17 +146,39 @@
         }
 
 async function analyzeFrameImageMatch() {
-            const vWidth = videoPlayer.videoWidth;
-            const vHeight = videoPlayer.videoHeight;
-            const scale = vWidth / BASE_WIDTH;
+            // 動画プレイヤーが実際に画面に表示されている見た目のサイズを取得
+            const displayWidth = videoPlayer.clientWidth;
+            const displayHeight = videoPlayer.clientHeight;
 
-            const cDeath = { x: BASE_ROI_DEATH.x * scale, y: BASE_ROI_DEATH.y * scale, w: BASE_ROI_DEATH.w * scale, h: BASE_ROI_DEATH.h * scale };
-            const cKill  = { x: BASE_ROI_KILL.x * scale,  y: BASE_ROI_KILL.y * scale,  w: BASE_ROI_KILL.w * scale,  h: BASE_ROI_KILL.h * scale  };
+            // 動画の本来の解像度と、画面表示サイズとの比率（スケール）を計算
+            const scaleX = videoPlayer.videoWidth / displayWidth;
+            const scaleY = videoPlayer.videoHeight / displayHeight;
+
+            // 1920x1080基準の基本座標
+            // ※もし枠の位置を微調整したい場合は、ここの数値を変更します
+            const targetDeath = { x: 901, y: 433, w: 117, h: 41 };
+            const targetKill  = { x: 911, y: 933, w: 98,  h: 29 };
+
+            // 画面上の表示位置から、実際の動画内のピクセル座標へ変換
+            const cDeath = {
+                x: (targetDeath.x / BASE_WIDTH) * displayWidth * scaleX,
+                y: (targetDeath.y / 1080) * displayHeight * scaleY,
+                w: targetDeath.w * (videoPlayer.videoWidth / BASE_WIDTH),
+                h: targetDeath.h * (videoPlayer.videoHeight / 1080)
+            };
+
+            const cKill = {
+                x: (targetKill.x / BASE_WIDTH) * displayWidth * scaleX,
+                y: (targetKill.y / 1080) * displayHeight * scaleY,
+                w: targetKill.w * (videoPlayer.videoWidth / BASE_WIDTH),
+                h: targetKill.h * (videoPlayer.videoHeight / 1080)
+            };
 
             const mainCanvas = document.createElement('canvas');
-            mainCanvas.width = vWidth; mainCanvas.height = vHeight;
+            mainCanvas.width = videoPlayer.videoWidth; 
+            mainCanvas.height = videoPlayer.videoHeight;
             const mainCtx = mainCanvas.getContext('2d');
-            mainCtx.drawImage(videoPlayer, 0, 0, vWidth, vHeight);
+            mainCtx.drawImage(videoPlayer, 0, 0, videoPlayer.videoWidth, videoPlayer.videoHeight);
 
             // デス枠の切り出しと白黒化
             canvasDeath.width = cDeath.w; canvasDeath.height = cDeath.h;
@@ -174,18 +196,18 @@ async function analyzeFrameImageMatch() {
             const deathScore = calculateMatchRate(ctxDeath, imgDeathTemplate, cDeath.w, cDeath.h);
             const killScore = calculateMatchRate(ctxKill, imgKillTemplate, cKill.w, cKill.h);
 
-            // ★リアルタイムで現在のスコアと現在の設定座標を画面に表示する（デバッグ用）
+            // リアルタイムでスコアを表示
             statusSpan.innerHTML = `📊 現在のスコア - デス: ${deathScore.toFixed(1)}% / キル: ${killScore.toFixed(1)}%<br>` +
-                                   `<small>設定中座標 - デス(x:${BASE_ROI_DEATH.x}, y:${BASE_ROI_DEATH.y}) / キル(x:${BASE_ROI_KILL.x}, y:${BASE_ROI_KILL.y})</small>`;
+                                   `<small>動画本来の解像度: ${videoPlayer.videoWidth}x${videoPlayer.videoHeight}</small>`;
 
             let eventType = '';
             let scoreStr = '';
 
-            // 一致度の判定（調整しやすいように80%に少し下げています）
-            if (killScore > 80) {
+            // 判定（最初は少し甘めの70%でテストしてみてください）
+            if (killScore > 70) {
                 eventType = '⚔️ キル（たおした！）';
                 scoreStr = `キル枠一致度: ${killScore.toFixed(1)}%`;
-            } else if (deathScore > 80) {
+            } else if (deathScore > 70) {
                 eventType = '💥 デス（やられた！）';
                 scoreStr = `デス枠一致度: ${deathScore.toFixed(1)}%`;
             }
