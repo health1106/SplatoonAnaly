@@ -13,20 +13,25 @@
         video { width: 100%; max-width: 640px; margin-top: 10px; border: 1px solid #ccc; }
         
         canvas { display: none; }
-        #previewArea img { max-width: 300px; max-height: 120px; border: 2px solid red; margin-bottom: 10px; display: block; }
         
         .control-btns { margin-top: 15px; display: flex; flex-direction: column; gap: 10px; }
-        .btn-group { display: flex; gap: 10px; }
         button { padding: 10px 20px; font-size: 16px; cursor: pointer; border: none; border-radius: 4px; transition: background-color 0.2s; }
-        #autoAnalyzeBtn { background-color: #ff5722; color: white; font-weight: bold; font-size: 18px; }
+        #autoAnalyzeBtn { background-color: #ff5722; color: white; font-weight: bold; font-size: 18px; width: 100%; }
         #autoAnalyzeBtn:hover { background-color: #e64a19; }
         #downloadCsvBtn { background-color: #28a745; color: white; margin-top: 15px; }
         #downloadCsvBtn:hover { background-color: #218838; }
-        #status { font-weight: bold; margin-top: 5px; color: #333; display: block; }
+        #status { font-weight: bold; margin-top: 5px; color: #333; display: block; line-height: 1.4; }
         
         #resultTable { width: 100%; margin-top: 20px; border-collapse: collapse; }
         #resultTable th, #resultTable td { border: 1px solid #ddd; padding: 8px; text-align: left; }
         #resultTable th { background-color: #f2f2f2; }
+
+        /* 調整パネルのスタイル */
+        .debug-panel { margin-top: 25px; padding: 15px; background: #fff; border: 2px dashed #ff5722; border-radius: 8px; }
+        .debug-group { margin-bottom: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .debug-btn { padding: 4px 8px; font-size: 13px; background: #e0e0e0; border-radius: 3px; }
+        .debug-btn:hover { background: #d0d0d0; }
+        .debug-btn.heavy { background: #b0bec5; }
     </style>
 </head>
 <body>
@@ -48,10 +53,38 @@
                 <p>② 解析検知プレビュー (2値化済)</p>
                 <div id="previewArea">
                     <p>【デス判定枠】</p>
-                    <canvas id="canvasDeath" style="display:block; border:2px solid red; margin-bottom:10px; max-width:300px;"></canvas>
+                    <canvas id="canvasDeath" style="display:block; border:2px solid red; margin-bottom:10px; max-width:300px; background:#000;"></canvas>
                     <p>【キル判定枠】</p>
-                    <canvas id="canvasKill" style="display:block; border:2px solid red; max-width:300px;"></canvas>
+                    <canvas id="canvasKill" style="display:block; border:2px solid red; max-width:300px; background:#000;"></canvas>
                 </div>
+            </div>
+        </div>
+        
+        <!-- 🛠️ リアルタイム位置微調整パネル -->
+        <div class="debug-panel">
+            <h3>🛠️ リアルタイム位置微調整パネル (GitHub更新不要！)</h3>
+            <p style="font-size: 0.9em; color: #555; margin-top: -5px;">動画をキル/デスの瞬間で一時停止し、文字が赤枠のど真ん中に収まるようボタンで動かしてください。スコアが跳ね上がります。</p>
+            
+            <div class="debug-group">
+                <strong>💀 デス枠位置 — Y軸(上下):</strong> <span id="valDeathY" style="font-weight:bold; color:#ff5722;">317</span>
+                <button class="debug-btn heavy" onclick="adjustPos('death','y',-5)">↑大幅上</button>
+                <button class="debug-btn" onclick="adjustPos('death','y',-1)">↑上</button>
+                <button class="debug-btn" onclick="adjustPos('death','y',1)">↓下</button>
+                <button class="debug-btn heavy" onclick="adjustPos('death','y',5)">↓大幅下</button>
+                &nbsp;&nbsp;<strong>X軸(左右):</strong> <span id="valDeathX" style="font-weight:bold; color:#ff5722;">601</span>
+                <button class="debug-btn" onclick="adjustPos('death','x',-1)">←左</button>
+                <button class="debug-btn" onclick="adjustPos('death','x',1)">→右</button>
+            </div>
+            
+            <div class="debug-group">
+                <strong>⚔️ キル枠位置 — Y軸(上下):</strong> <span id="valKillY" style="font-weight:bold; color:#007bff;">632</span>
+                <button class="debug-btn heavy" onclick="adjustPos('kill','y',-5)">↑大幅上</button>
+                <button class="debug-btn" onclick="adjustPos('kill','y',-1)">↑上</button>
+                <button class="debug-btn" onclick="adjustPos('kill','y',1)">↓下</button>
+                <button class="debug-btn heavy" onclick="adjustPos('kill','y',5)">↓大幅下</button>
+                &nbsp;&nbsp;<strong>X軸(左右):</strong> <span id="valKillX" style="font-weight:bold; color:#007bff;">607</span>
+                <button class="debug-btn" onclick="adjustPos('kill','x',-1)">←左</button>
+                <button class="debug-btn" onclick="adjustPos('kill','x',1)">→右</button>
             </div>
         </div>
         
@@ -84,10 +117,12 @@
         const canvasDeath = document.getElementById('canvasDeath');
         const canvasKill = document.getElementById('canvasKill');
 
-        // 1920x1080基準の各テロップの正確な文字位置（へるすさんの画像サイズに同期）
-        const BASE_WIDTH = 1920;
-        const BASE_ROI_DEATH = { x: 901, y: 433, w: 117, h: 41 }; // 👈 横117, 縦41 に変更
-        const BASE_ROI_KILL  = { x: 911, y: 933, w: 98,  h: 29 }; // 👈 横98,  縦29 に変更
+        // 1280x720基準の初期想定座標（ボタン操作でリアルタイムに変更されます）
+        let targetDeath = { x: 601, y: 317, w: 117, h: 41 };
+        let targetKill  = { x: 607, y: 632, w: 98,  h: 29 };
+
+        const RESOLUTION_W = 1280;
+        const RESOLUTION_H = 720;
 
         const analysisData = [];
         let isAnalyzing = false;
@@ -96,33 +131,50 @@
         const imgKillTemplate = new Image(); imgKillTemplate.src = 'template_kill.png';
         const imgDeathTemplate = new Image(); imgDeathTemplate.src = 'template_death.png';
 
+        // 微調整パネルのボタンアクション
+        window.adjustPos = function(type, axis, val) {
+            if (type === 'death') {
+                targetDeath[axis] += val;
+                document.getElementById('valDeathX').textContent = targetDeath.x;
+                document.getElementById('valDeathY').textContent = targetDeath.y;
+            } else {
+                targetKill[axis] += val;
+                document.getElementById('valKillX').textContent = targetKill.x;
+                document.getElementById('valKillY').textContent = targetKill.y;
+            }
+            // 座標が動いたので、現在のコマで即座に再計算して画面枠を更新
+            analyzeFrameImageMatch();
+        };
+
         videoInput.addEventListener('change', function(e) {
             if (e.target.files[0]) {
                 videoPlayer.src = URL.createObjectURL(e.target.files[0]);
                 statusSpan.textContent = '動画を読み込みました。いつでも解析可能です！';
             }
         });
+        
+        // 動画の手動シーク（タイムスタンプ移動）が完了したときもプレビューを即更新する
+        videoPlayer.addEventListener('seeked', analyzeFrameImageMatch);
 
-        // 画像を完全な白黒（2値化）に変換する関数
+        // 画像をパキッとした白黒（2値化）に変換する関数
         function binarizeContext(ctx, w, h) {
             const imgData = ctx.getImageData(0, 0, w, h);
             const data = imgData.data;
             for (let i = 0; i < data.length; i += 4) {
                 const v = (0.2126 * data[i] + 0.7152 * data[i+1] + 0.0722 * data[i+2]);
-                // 文字部分（白）を引き立たせるため、ある程度明るいピクセルだけを白(255)にする
-                const color = (v > 160) ? 255 : 0;
+                const color = (v > 150) ? 255 : 0; // 文字の白を拾いやすくするため150に調整
                 data[i] = data[i+1] = data[i+2] = color;
             }
             ctx.putImageData(imgData, 0, 0);
         }
 
-        // 2つの白黒画像の一致度（％）を計算する関数
+        // 白黒画像同士のドット引き算（一致度％）を計算する関数
         function calculateMatchRate(ctxVideo, imgTemplate, w, h) {
             const tempCanvas = document.createElement('canvas');
             tempCanvas.width = w; tempCanvas.height = h;
             const tempCtx = tempCanvas.getContext('2d');
             tempCtx.drawImage(imgTemplate, 0, 0, w, h);
-            binarizeContext(tempCtx, w, h); // テンプレート側も自動で完全白黒化
+            binarizeContext(tempCtx, w, h);
 
             const vData = ctxVideo.getImageData(0, 0, w, h).data;
             const tData = tempCtx.getImageData(0, 0, w, h).data;
@@ -131,38 +183,29 @@
             const totalPixels = w * h;
 
             for (let i = 0; i < vData.length; i += 4) {
-                if (vData[i] === tData[i]) { // 白(255)同士、または黒(0)同士で一致しているか
+                if (vData[i] === tData[i]) {
                     matchPixels++;
                 }
             }
             return (matchPixels / totalPixels) * 100;
         }
 
-        // 動画の秒数を「00:00」の形式に変換する関数
         function formatTime(seconds) {
             const m = Math.floor(seconds / 60).toString().padStart(2, '0');
             const s = Math.floor(seconds % 60).toString().padStart(2, '0');
             return `${m}:${s}`;
         }
 
-async function analyzeFrameImageMatch() {
-            // 動画プレイヤーが実際に画面に表示されている見た目のサイズを取得
-            const displayWidth = videoPlayer.clientWidth;
-            const displayHeight = videoPlayer.clientHeight;
+        async function analyzeFrameImageMatch() {
+            if (!videoPlayer.videoWidth) return;
 
-            // 動画の本来の解像度と、画面表示サイズとの比率（スケール）を計算
-            // ★ここを1280x720前提に変更します
-            const RESOLUTION_W = 1280;
-            const RESOLUTION_H = 720;
-            
+            const displayWidth = videoPlayer.clientWidth || 640;
+            const displayHeight = videoPlayer.clientHeight || 360;
+
             const scaleX = videoPlayer.videoWidth / displayWidth;
             const scaleY = videoPlayer.videoHeight / displayHeight;
 
-            // 1280x720基準の、実際の画面から逆算したドンピシャの座標
-            const targetDeath = { x: 601, y: 317, w: 117, h: 41 }; // 👈 1280x720ベースのデス位置
-            const targetKill  = { x: 607, y: 632, w: 98,  h: 29 }; // 👈 1280x720ベースのキル位置
-
-            // 画面上の表示位置から、実際の動画内のピクセル座標へ変換
+            // 再生中動画の実解像度に合わせて切り出し座標をマッピング
             const cDeath = {
                 x: (targetDeath.x / RESOLUTION_W) * displayWidth * scaleX,
                 y: (targetDeath.y / RESOLUTION_H) * displayHeight * scaleY,
@@ -183,39 +226,40 @@ async function analyzeFrameImageMatch() {
             const mainCtx = mainCanvas.getContext('2d');
             mainCtx.drawImage(videoPlayer, 0, 0, videoPlayer.videoWidth, videoPlayer.videoHeight);
 
-            // デス枠の切り出しと白黒化
+            // デス枠切り出し
             canvasDeath.width = cDeath.w; canvasDeath.height = cDeath.h;
             const ctxDeath = canvasDeath.getContext('2d');
             ctxDeath.drawImage(mainCanvas, cDeath.x, cDeath.y, cDeath.w, cDeath.h, 0, 0, cDeath.w, cDeath.h);
             binarizeContext(ctxDeath, cDeath.w, cDeath.h);
 
-            // キル枠の切り出しと白黒化
+            // キル枠切り出し
             canvasKill.width = cKill.w; canvasKill.height = cKill.h;
             const ctxKill = canvasKill.getContext('2d');
             ctxKill.drawImage(mainCanvas, cKill.x, cKill.y, cKill.w, cKill.h, 0, 0, cKill.w, cKill.h);
             binarizeContext(ctxKill, cKill.w, cKill.h);
 
-            // 一致度の計算
+            // スコア算出
             const deathScore = calculateMatchRate(ctxDeath, imgDeathTemplate, cDeath.w, cDeath.h);
             const killScore = calculateMatchRate(ctxKill, imgKillTemplate, cKill.w, cKill.h);
 
-            // リアルタイムでスコアを表示
-            statusSpan.innerHTML = `📊 現在のスコア - デス: ${deathScore.toFixed(1)}% / キル: ${killScore.toFixed(1)}%<br>` +
-                                   `<small>動画本来の解像度: ${videoPlayer.videoWidth}x${videoPlayer.videoHeight}</small>`;
+            // ステータス表示の更新
+            statusSpan.innerHTML = `📊 現在のリアルタイムスコア — デス: <span style="color:#ff5722;">${deathScore.toFixed(1)}%</span> / キル: <span style="color:#007bff;">${killScore.toFixed(1)}%</span><br>` +
+                                   `<small>動画本来の解像度: ${videoPlayer.videoWidth}x${videoPlayer.videoHeight} | ターゲット座標: デス(${targetDeath.x}, ${targetDeath.y}) キル(${targetKill.x}, ${targetKill.y})</small>`;
 
             let eventType = '';
             let scoreStr = '';
 
-            // 判定（最初は少し甘めの70%でテストしてみてください）
-            if (killScore > 70) {
+            // 枠が合えば跳ね上がるため、検知のしきい値を75%に設定
+            if (killScore > 75) {
                 eventType = '⚔️ キル（たおした！）';
                 scoreStr = `キル枠一致度: ${killScore.toFixed(1)}%`;
-            } else if (deathScore > 70) {
+            } else if (deathScore > 75) {
                 eventType = '💥 デス（やられた！）';
                 scoreStr = `デス枠一致度: ${deathScore.toFixed(1)}%`;
             }
 
-            if (eventType !== '') {
+            // 自動解析中のみ、イベントを検知したら記録を追記
+            if (eventType !== '' && isAnalyzing) {
                 const currentTimeStr = formatTime(videoPlayer.currentTime);
                 const lastLog = analysisData[analysisData.length - 1];
 
@@ -232,15 +276,13 @@ async function analyzeFrameImageMatch() {
                 }
             }
         }
-        
-        // 超特急自動解析ボタン
+
+        // 自動解析ボタンのループ処理
         autoAnalyzeBtn.addEventListener('click', async function() {
             if (!videoPlayer.src) return alert('動画を選択してください。');
-            
             if (isAnalyzing) {
                 isAnalyzing = false;
                 autoAnalyzeBtn.textContent = '⚡ 動画全体を超特急自動解析 (AIなし)';
-                statusSpan.textContent = '一時停止しました。';
                 return;
             }
 
@@ -251,25 +293,20 @@ async function analyzeFrameImageMatch() {
 
             const waitForSeek = () => new Promise(resolve => videoPlayer.onseeked = resolve);
 
-            // 1秒刻みの超高速ループ
             while (isAnalyzing && videoPlayer.currentTime < videoPlayer.duration) {
-                const cur = videoPlayer.currentTime;
-                statusSpan.textContent = `🚀 超特急解析中... ${formatTime(cur)} / ${formatTime(videoPlayer.duration)}`;
-
                 await waitForSeek();
                 await analyzeFrameImageMatch();
-
-                videoPlayer.currentTime += 1.0; // 1秒進める
+                videoPlayer.currentTime += 1.0; // 1秒刻みシーク
             }
 
             if (isAnalyzing) {
                 isAnalyzing = false;
                 autoAnalyzeBtn.textContent = '⚡ 動画全体を超特急自動解析 (AIなし)';
-                statusSpan.textContent = '🏁 すべての超特急解析が完了しました！爆速でしたね！';
+                statusSpan.innerHTML = '🏁 すべての超特急解析が完了しました！';
             }
         });
 
-        // CSVダウンロード
+        // CSV出力
         downloadCsvBtn.addEventListener('click', function() {
             if (analysisData.length === 0) return alert('データがありません。');
             let csv = '経過時間,判定イベント,詳細\n';
