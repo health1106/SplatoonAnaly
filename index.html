@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>スプラ試合動画解析ツール(プロトタイプ・Wテロップ版)</title>
+    <!-- Tesseract.jsを読み込む (インターネット接続が必要) -->
+    <script src="https://unpkg.com/tesseract.js@5.0.3/dist/tesseract.min.js"></script>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background: #f0f0f0; }
+        .container { max-width: 900px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .flex-container { display: flex; gap: 20px; }
+        .video-side { flex: 1; }
+        .analyzer-side { flex: 1; }
+        video { width: 100%; max-width: 640px; margin-top: 10px; border: 1px solid #ccc; }
+        
+        /* 内部処理用のキャンバスは画面に表示しない */
+        canvas { display: none; }
+        
+        /* 切り出しエリアのプレビュー用 */
+        #previewArea img { max-width: 300px; max-height: 120px; border: 2px solid red; margin-bottom: 10px; display: block; }
+        
+        .control-btns { margin-top: 15px; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; border: none; border-radius: 4px; transition: background-color 0.2s; }
+        #captureBtn { background-color: #007bff; color: white; }
+        #captureBtn:hover { background-color: #0056b3; }
+        #downloadCsvBtn { background-color: #28a745; color: white; margin-top: 15px; }
+        #downloadCsvBtn:hover { background-color: #218838; }
+        #status { font-weight: bold; margin-top: 10px; color: #333; display: block; }
+        
+        /* 解析結果の表示エリア */
+        #resultTable { width: 100%; margin-top: 20px; border-collapse: collapse; }
+        #resultTable th, #resultTable td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        #resultTable th { background-color: #f2f2f2; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>スプラ試合動画解析ツール</h1>
+        <div class="flex-container">
+            <!-- 左側：動画プレビュー -->
+            <div class="video-side">
+                <p>① 動画ファイルを選択</p>
+                <input type="file" id="videoInput" accept="video/*">
+                <br>
+                <video id="videoPlayer" controls crossorigin="anonymous"></video>
+                <div class="control-btns">
+                    <button id="captureBtn">現在のコマを解析する</button>
+                    <span id="status">動画を選択してください。</span>
+                </div>
+            </div>
+            
+            <!-- 右側：解析プレビュー（エリアを2つに分離） -->
+            <div class="analyzer-side">
+                <p>② 切り出しプレビュー</p>
+                <div id="previewArea">
+                    <p>【タイマーエリア】</p>
+                    <img id="previewTimer" src="" alt="タイマー">
+                    <p>【デス判定エリア（上）】※ネガポジ反転済</p>
+                    <img id="previewDeath" src="" alt="デスエリア">
+                    <p>【キル判定エリア（下）】※ネガポジ反転済</p>
+                    <img id="previewKill" src="" alt="キルエリア">
+                </div>
+            </div>
+        </div>
+        
+        <!-- 解析結果のテーブル -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 30px;">
+            <h2>📊 解析結果記録</h2>
+            <button id="downloadCsvBtn">CSVファイルをダウンロード</button>
+        </div>
+        
+        <table id="resultTable">
+            <thead>
+                <tr>
+                    <th>試合時間</th>
+                    <th>認識テキスト（上:デス / 下:キル）</th>
+                    <th>判定イベント</th>
+                </tr>
+            </thead>
+            <tbody id="resultBody">
+                <!-- ここに結果が追記される -->
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const videoInput = document.getElementById('videoInput');
+        const videoPlayer = document.getElementById('videoPlayer');
+        const captureBtn = document.getElementById('captureBtn');
+        const downloadCsvBtn = document.getElementById('downloadCsvBtn');
+        const statusSpan = document.getElementById('status');
+        
+        const previewTimer = document.getElementById('previewTimer');
+        const previewDeath = document.getElementById('previewDeath');
+        const previewKill = document.getElementById('previewKill');
+        const resultBody = document.getElementById('resultBody');
+
+        // ★ 3エリアの独立した座標設定
+        const BASE_WIDTH = 1920;
+        const BASE_ROI_TIMER = { x: 910, y: 50, w: 100, h: 50 };
+        const BASE_ROI_DEATH = { x: 740, y: 345, w: 440, h: 120 }; // 今までのデス位置
+        const BASE_ROI_KILL  = { x: 740, y: 995, w: 440, h: 40 }; // 新設：画面最下部ちょい上のキル位置
+
+        const analysisData = [];
+
+        videoInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                videoPlayer.src = URL.createObjectURL(file);
+                statusSpan.textContent = '動画を読み込みました。';
+            }
+        });
+
+        captureBtn.addEventListener('click', async function() {
+            if (!videoPlayer.src) {
+                statusSpan.textContent = '動画を選択してください。';
+                return;
+            }
+
+            statusSpan.textContent = '⏳ タイマーと2つのテロップをAI解析中...';
+
+            const vWidth = videoPlayer.videoWidth;
+            const vHeight = videoPlayer.videoHeight;
+            const scale = vWidth / BASE_WIDTH;
+
+            // 各座標のスケール計算
+            const cTimer = { x: BASE_ROI_TIMER.x * scale, y: BASE_ROI_TIMER.y * scale, w: BASE_ROI_TIMER.w * scale, h: BASE_ROI_TIMER.h * scale };
+            const cDeath = { x: BASE_ROI_DEATH.x * scale, y: BASE_ROI_DEATH.y * scale, w: BASE_ROI_DEATH.w * scale, h: BASE_ROI_DEATH.h * scale };
+            const cKill  = { x: BASE_ROI_KILL.x * scale,  y: BASE_ROI_KILL.y * scale,  w: BASE_ROI_KILL.w * scale,  h: BASE_ROI_KILL.h * scale  };
+
+            const mainCanvas = document.createElement('canvas');
+            mainCanvas.width = vWidth;
+            mainCanvas.height = vHeight;
+            const mainCtx = mainCanvas.getContext('2d');
+            mainCtx.drawImage(videoPlayer, 0, 0, vWidth, vHeight);
+
+            // 1. タイマー切り出し
+            const timerCanvas = document.createElement('canvas');
+            timerCanvas.width = cTimer.w; timerCanvas.height = cTimer.h;
+            timerCanvas.getContext('2d').drawImage(mainCanvas, cTimer.x, cTimer.y, cTimer.w, cTimer.h, 0, 0, cTimer.w, cTimer.h);
+            const timerDataURL = timerCanvas.toDataURL();
+            previewTimer.src = timerDataURL;
+
+            // 2. デスエリア切り出し（ネガポジ反転）
+            const deathCanvas = document.createElement('canvas');
+            deathCanvas.width = cDeath.w; deathCanvas.height = cDeath.h;
+            const deathCtx = deathCanvas.getContext('2d');
+            deathCtx.drawImage(mainCanvas, cDeath.x, cDeath.y, cDeath.w, cDeath.h, 0, 0, cDeath.w, cDeath.h);
+            deathCtx.filter = 'invert(1)';
+            deathCtx.drawImage(deathCanvas, 0, 0);
+            const deathDataURL = deathCanvas.toDataURL();
+            previewDeath.src = deathDataURL;
+
+            // 3. キルエリア切り出し（ネガポジ反転）
+            const killCanvas = document.createElement('canvas');
+            killCanvas.width = cKill.w; killCanvas.height = cKill.h;
+            const killCtx = killCanvas.getContext('2d');
+            killCtx.drawImage(mainCanvas, cKill.x, cKill.y, cKill.w, cKill.h, 0, 0, cKill.w, cKill.h);
+            killCtx.filter = 'invert(1)';
+            killCtx.drawImage(killCanvas, 0, 0);
+            const killDataURL = killCanvas.toDataURL();
+            previewKill.src = killDataURL;
+
+            try {
+                // 3つのエリアを同時にOCRにかける
+                const tRes = await Tesseract.recognize(timerDataURL, 'eng', { tessedit_char_whitelist: '0123456789:' });
+                const dRes = await Tesseract.recognize(deathDataURL, 'jpn');
+                const kRes = await Tesseract.recognize(killDataURL, 'jpn');
+
+                const dText = dRes.data.text.replace(/\s+/g, '');
+                const kText = kRes.data.text.replace(/\s+/g, '');
+
+                let eventType = '判定なし';
+                let cleanAction = 'ー';
+
+                // キル判定（キルエリアのテキストを検証）
+                if (kText.includes('たおした') || kText.includes('おした') || kText.includes('とした')) {
+                    eventType = '⚔️ キル（たおした）';
+                    cleanAction = 'たおした';
+                } 
+                // デス判定（デスエリアのテキストを検証）
+                else if (
+                    dText.includes('やられた') || dText.includes('られた') || dText.includes('5られた') ||
+                    (dText.includes('や') && dText.includes('れた'))
+                ) {
+                    eventType = '💥 デス（やられた）';
+                    cleanAction = 'やられた';
+                }
+
+                analysisData.push({
+                    time: tRes.data.text.trim() || '不明',
+                    rawText: `上:${dText} / 下:${kText}`,
+                    action: cleanAction
+                });
+
+                const newRow = document.createElement('tr');
+                newRow.innerHTML = `
+                    <td><strong>${tRes.data.text.trim() || '不明'}</strong></td>
+                    <td><span style="color:#666; font-size:0.85em;">[上] ${dText}<br>[下] ${kText}</span></td>
+                    <td><span style="background:#eee; border-radius:4px; padding:2px 6px; font-weight:bold;">${cleanAction}</span> (${eventType})</td>
+                `;
+                resultBody.appendChild(newRow);
+
+                statusSpan.textContent = '✅ Wエリアモードで解析が完了しました！';
+
+            } catch (error) {
+                console.error(error);
+                statusSpan.textContent = '❌ OCR解析中にエラーが発生しました。';
+            }
+        });
+
+        // CSVダウンロード
+        downloadCsvBtn.addEventListener('click', function() {
+            if (analysisData.length === 0) return alert('データがありません。');
+            let csv = '試合時間,認識テキスト,判定イベント\n';
+            analysisData.forEach(row => { csv += `"${row.time}","${row.rawText}","${row.action}"\n`; });
+            const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+            const blob = new Blob([bom, csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `splatoon_match_log_${new Date().toISOString().slice(0,10)}.csv`;
+            link.click();
+        });
+    </script>
+</body>
+</html>
