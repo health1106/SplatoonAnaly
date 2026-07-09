@@ -151,27 +151,30 @@ async function analyzeFrameImageMatch() {
             const displayHeight = videoPlayer.clientHeight;
 
             // 動画の本来の解像度と、画面表示サイズとの比率（スケール）を計算
+            // ★ここを1280x720前提に変更します
+            const RESOLUTION_W = 1280;
+            const RESOLUTION_H = 720;
+            
             const scaleX = videoPlayer.videoWidth / displayWidth;
             const scaleY = videoPlayer.videoHeight / displayHeight;
 
-            // 1920x1080基準の基本座標
-            // 1920x1080基準の、実際の画面から特定したドンピシャの座標
-            const targetDeath = { x: 901, y: 475, w: 117, h: 41 }; // 👈 yを475に修正
-            const targetKill  = { x: 911, y: 948, w: 98,  h: 29 }; // 👈 yを948に修正
+            // 1280x720基準の、実際の画面から逆算したドンピシャの座標
+            const targetDeath = { x: 601, y: 317, w: 117, h: 41 }; // 👈 1280x720ベースのデス位置
+            const targetKill  = { x: 607, y: 632, w: 98,  h: 29 }; // 👈 1280x720ベースのキル位置
 
             // 画面上の表示位置から、実際の動画内のピクセル座標へ変換
             const cDeath = {
-                x: (targetDeath.x / BASE_WIDTH) * displayWidth * scaleX,
-                y: (targetDeath.y / 1080) * displayHeight * scaleY,
-                w: targetDeath.w * (videoPlayer.videoWidth / BASE_WIDTH),
-                h: targetDeath.h * (videoPlayer.videoHeight / 1080)
+                x: (targetDeath.x / RESOLUTION_W) * displayWidth * scaleX,
+                y: (targetDeath.y / RESOLUTION_H) * displayHeight * scaleY,
+                w: targetDeath.w * (videoPlayer.videoWidth / RESOLUTION_W),
+                h: targetDeath.h * (videoPlayer.videoHeight / RESOLUTION_H)
             };
 
             const cKill = {
-                x: (targetKill.x / BASE_WIDTH) * displayWidth * scaleX,
-                y: (targetKill.y / 1080) * displayHeight * scaleY,
-                w: targetKill.w * (videoPlayer.videoWidth / BASE_WIDTH),
-                h: targetKill.h * (videoPlayer.videoHeight / 1080)
+                x: (targetKill.x / RESOLUTION_W) * displayWidth * scaleX,
+                y: (targetKill.y / RESOLUTION_H) * displayHeight * scaleY,
+                w: targetKill.w * (videoPlayer.videoWidth / RESOLUTION_W),
+                h: targetKill.h * (videoPlayer.videoHeight / RESOLUTION_H)
             };
 
             const mainCanvas = document.createElement('canvas');
