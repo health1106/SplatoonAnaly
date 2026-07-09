@@ -155,9 +155,9 @@ async function analyzeFrameImageMatch() {
             const scaleY = videoPlayer.videoHeight / displayHeight;
 
             // 1920x1080基準の基本座標
-            // ※もし枠の位置を微調整したい場合は、ここの数値を変更します
-            const targetDeath = { x: 901, y: 433, w: 117, h: 41 };
-            const targetKill  = { x: 911, y: 933, w: 98,  h: 29 };
+            // 1920x1080基準の、実際の画面から特定したドンピシャの座標
+            const targetDeath = { x: 901, y: 475, w: 117, h: 41 }; // 👈 yを475に修正
+            const targetKill  = { x: 911, y: 948, w: 98,  h: 29 }; // 👈 yを948に修正
 
             // 画面上の表示位置から、実際の動画内のピクセル座標へ変換
             const cDeath = {
