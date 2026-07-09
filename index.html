@@ -3,9 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>スプラ試合動画解析ツール(自動爆速版)</title>
-    <!-- Tesseract.jsを読み込む (インターネット接続が必要) -->
-    <script src="https://unpkg.com/tesseract.js@5.0.3/dist/tesseract.min.js"></script>
+    <title>スプラ試合動画解析ツール(超特急・画像一致版)</title>
     <style>
         body { font-family: sans-serif; margin: 20px; background: #f0f0f0; }
         .container { max-width: 900px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
@@ -20,10 +18,8 @@
         .control-btns { margin-top: 15px; display: flex; flex-direction: column; gap: 10px; }
         .btn-group { display: flex; gap: 10px; }
         button { padding: 10px 20px; font-size: 16px; cursor: pointer; border: none; border-radius: 4px; transition: background-color 0.2s; }
-        #captureBtn { background-color: #007bff; color: white; }
-        #captureBtn:hover { background-color: #0056b3; }
-        #autoAnalyzeBtn { background-color: #ffc107; color: #212529; font-weight: bold; }
-        #autoAnalyzeBtn:hover { background-color: #e0a800; }
+        #autoAnalyzeBtn { background-color: #ff5722; color: white; font-weight: bold; font-size: 18px; }
+        #autoAnalyzeBtn:hover { background-color: #e64a19; }
         #downloadCsvBtn { background-color: #28a745; color: white; margin-top: 15px; }
         #downloadCsvBtn:hover { background-color: #218838; }
         #status { font-weight: bold; margin-top: 5px; color: #333; display: block; }
@@ -35,7 +31,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>スプラ試合動画解析ツール</h1>
+        <h1>スプラ試合動画解析ツール 🚀</h1>
         <div class="flex-container">
             <div class="video-side">
                 <p>① 動画ファイルを選択</p>
@@ -43,39 +39,33 @@
                 <br>
                 <video id="videoPlayer" controls crossorigin="anonymous"></video>
                 <div class="control-btns">
-                    <div class="btn-group">
-                        <button id="captureBtn">現在のコマを解析</button>
-                        <!-- ★自動解析ボタンを追加 -->
-                        <button id="autoAnalyzeBtn">🤖 動画全体を自動爆速解析</button>
-                    </div>
+                    <button id="autoAnalyzeBtn">⚡ 動画全体を超特急自動解析 (AIなし)</button>
                     <span id="status">動画を選択してください。</span>
                 </div>
             </div>
             
             <div class="analyzer-side">
-                <p>② 切り出しプレビュー</p>
+                <p>② 解析検知プレビュー (2値化済)</p>
                 <div id="previewArea">
-                    <p>【タイマーエリア】</p>
-                    <img id="previewTimer" src="" alt="タイマー">
-                    <p>【デス判定エリア（上）】※ネガポジ反転済</p>
-                    <img id="previewDeath" src="" alt="デスエリア">
-                    <p>【キル判定エリア（下）】※ネガポジ反転済</p>
-                    <img id="previewKill" src="" alt="キルエリア">
+                    <p>【デス判定枠】</p>
+                    <canvas id="canvasDeath" style="display:block; border:2px solid red; margin-bottom:10px; max-width:300px;"></canvas>
+                    <p>【キル判定枠】</p>
+                    <canvas id="canvasKill" style="display:block; border:2px solid red; max-width:300px;"></canvas>
                 </div>
             </div>
         </div>
         
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 30px;">
-            <h2>📊 解析結果記録</h2>
+            <h2>📊 解析結果記録 (画像一致方式)</h2>
             <button id="downloadCsvBtn">CSVファイルをダウンロード</button>
         </div>
         
         <table id="resultTable">
             <thead>
                 <tr>
-                    <th>試合時間</th>
-                    <th>認識テキスト（上:デス / 下:キル）</th>
+                    <th>経過時間</th>
                     <th>判定イベント</th>
+                    <th>一致度スコア</th>
                 </tr>
             </thead>
             <tbody id="resultBody">
@@ -86,60 +76,80 @@
     <script>
         const videoInput = document.getElementById('videoInput');
         const videoPlayer = document.getElementById('videoPlayer');
-        const captureBtn = document.getElementById('captureBtn');
         const autoAnalyzeBtn = document.getElementById('autoAnalyzeBtn');
         const downloadCsvBtn = document.getElementById('downloadCsvBtn');
         const statusSpan = document.getElementById('status');
-        
-        const previewTimer = document.getElementById('previewTimer');
-        const previewDeath = document.getElementById('previewDeath');
-        const previewKill = document.getElementById('previewKill');
         const resultBody = document.getElementById('resultBody');
+        
+        const canvasDeath = document.getElementById('canvasDeath');
+        const canvasKill = document.getElementById('canvasKill');
 
+        // 1920x1080基準の各テロップの正確な文字位置
         const BASE_WIDTH = 1920;
-        const BASE_ROI_TIMER = { x: 910, y: 50, w: 100, h: 50 };
-        const BASE_ROI_DEATH = { x: 740, y: 345, w: 440, h: 120 };
-        const BASE_ROI_KILL  = { x: 740, y: 770, w: 440, h: 100 };
+        const BASE_ROI_DEATH = { x: 860, y: 385, w: 200, h: 50 }; // 「やられた！」の4文字付近
+        const BASE_ROI_KILL  = { x: 920, y: 925, w: 220, h: 45 }; // 「をたおした！」の6文字付近
 
         const analysisData = [];
-        let isAnalyzing = false; // 自動解析中かどうかのフラグ
+        let isAnalyzing = false;
+
+        // テンプレート画像の読み込み
+        const imgKillTemplate = new Image(); imgKillTemplate.src = 'template_kill.png';
+        const imgDeathTemplate = new Image(); imgDeathTemplate.src = 'template_death.png';
 
         videoInput.addEventListener('change', function(e) {
-            const file = e.target.files[0];
-            if (file) {
-                videoPlayer.src = URL.createObjectURL(file);
-                statusSpan.textContent = '動画を読み込みました。';
+            if (e.target.files[0]) {
+                videoPlayer.src = URL.createObjectURL(e.target.files[0]);
+                statusSpan.textContent = '動画を読み込みました。いつでも解析可能です！';
             }
         });
 
-        // 画像の「白っぽさ（輝度）」を計算してテロップが出現したかチェックする関数
-        function checkTextPresence(ctx, width, height) {
-            const imgData = ctx.getImageData(0, 0, width, height);
+        // 画像を完全な白黒（2値化）に変換する関数
+        function binarizeContext(ctx, w, h) {
+            const imgData = ctx.getImageData(0, 0, w, h);
             const data = imgData.data;
-            let whitePixelCount = 0;
-
-            // 全ピクセルをスキャンして、反転後に白（明るいグレー以上）になった部分をカウント
             for (let i = 0; i < data.length; i += 4) {
-                const r = data[i];
-                const g = data[i+1];
-                const b = data[i+2];
-                // 輝度の計算式
-                const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
-                if (brightness > 200) { // 200以上の明るさ＝テロップの黒帯が反転して白くなった部分
-                    whitePixelCount++;
-                }
+                const v = (0.2126 * data[i] + 0.7152 * data[i+1] + 0.0722 * data[i+2]);
+                // 文字部分（白）を引き立たせるため、ある程度明るいピクセルだけを白(255)にする
+                const color = (v > 160) ? 255 : 0;
+                data[i] = data[i+1] = data[i+2] = color;
             }
-            // 画面全体に対して「白」が占める割合を％で返す
-            return (whitePixelCount / (width * height)) * 100;
+            ctx.putImageData(imgData, 0, 0);
         }
 
-        // コマ1枚の解析コアロジック
-        async function analyzeFrame() {
+        // 2つの白黒画像の一致度（％）を計算する関数
+        function calculateMatchRate(ctxVideo, imgTemplate, w, h) {
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = w; tempCanvas.height = h;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(imgTemplate, 0, 0, w, h);
+            binarizeContext(tempCtx, w, h); // テンプレート側も自動で完全白黒化
+
+            const vData = ctxVideo.getImageData(0, 0, w, h).data;
+            const tData = tempCtx.getImageData(0, 0, w, h).data;
+
+            let matchPixels = 0;
+            const totalPixels = w * h;
+
+            for (let i = 0; i < vData.length; i += 4) {
+                if (vData[i] === tData[i]) { // 白(255)同士、または黒(0)同士で一致しているか
+                    matchPixels++;
+                }
+            }
+            return (matchPixels / totalPixels) * 100;
+        }
+
+        // 動画の秒数を「00:00」の形式に変換する関数
+        function formatTime(seconds) {
+            const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+            const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+            return `${m}:${s}`;
+        }
+
+        async function analyzeFrameImageMatch() {
             const vWidth = videoPlayer.videoWidth;
             const vHeight = videoPlayer.videoHeight;
             const scale = vWidth / BASE_WIDTH;
 
-            const cTimer = { x: BASE_ROI_TIMER.x * scale, y: BASE_ROI_TIMER.y * scale, w: BASE_ROI_TIMER.w * scale, h: BASE_ROI_TIMER.h * scale };
             const cDeath = { x: BASE_ROI_DEATH.x * scale, y: BASE_ROI_DEATH.y * scale, w: BASE_ROI_DEATH.w * scale, h: BASE_ROI_DEATH.h * scale };
             const cKill  = { x: BASE_ROI_KILL.x * scale,  y: BASE_ROI_KILL.y * scale,  w: BASE_ROI_KILL.w * scale,  h: BASE_ROI_KILL.h * scale  };
 
@@ -148,150 +158,99 @@
             const mainCtx = mainCanvas.getContext('2d');
             mainCtx.drawImage(videoPlayer, 0, 0, vWidth, vHeight);
 
-            // 1. デスエリア切り出し（ネガポジ反転）
-            const deathCanvas = document.createElement('canvas');
-            deathCanvas.width = cDeath.w; deathCanvas.height = cDeath.h;
-            const deathCtx = deathCanvas.getContext('2d');
-            deathCtx.drawImage(mainCanvas, cDeath.x, cDeath.y, cDeath.w, cDeath.h, 0, 0, cDeath.w, cDeath.h);
-            deathCtx.filter = 'invert(1)';
-            deathCtx.drawImage(deathCanvas, 0, 0);
+            // デス枠の切り出しと白黒化
+            canvasDeath.width = cDeath.w; canvasDeath.height = cDeath.h;
+            const ctxDeath = canvasDeath.getContext('2d');
+            ctxDeath.drawImage(mainCanvas, cDeath.x, cDeath.y, cDeath.w, cDeath.h, 0, 0, cDeath.w, cDeath.h);
+            binarizeContext(ctxDeath, cDeath.w, cDeath.h);
 
-            // 2. キルエリア切り出し（ネガポジ反転）
-            const killCanvas = document.createElement('canvas');
-            killCanvas.width = cKill.w; killCanvas.height = cKill.h;
-            const killCtx = killCanvas.getContext('2d');
-            killCtx.drawImage(mainCanvas, cKill.x, cKill.y, cKill.w, cKill.h, 0, 0, cKill.w, cKill.h);
-            killCtx.filter = 'invert(1)';
-            killCtx.drawImage(killCanvas, 0, 0);
+            // キル枠の切り出しと白黒化
+            canvasKill.width = cKill.w; canvasKill.height = cKill.h;
+            const ctxKill = canvasKill.getContext('2d');
+            ctxKill.drawImage(mainCanvas, cKill.x, cKill.y, cKill.w, cKill.h, 0, 0, cKill.w, cKill.h);
+            binarizeContext(ctxKill, cKill.w, cKill.h);
 
-            // ★ 超軽量画像チェック：エリアに黒帯（反転して白）が出現したか？
-            const deathScore = checkTextPresence(deathCtx, cDeath.w, cDeath.h);
-            const killScore = checkTextPresence(killCtx, cKill.w, cKill.h);
+            // 一致度の計算
+            const deathScore = calculateMatchRate(ctxDeath, imgDeathTemplate, cDeath.w, cDeath.h);
+            const killScore = calculateMatchRate(ctxKill, imgKillTemplate, cKill.w, cKill.h);
 
-            // 上下どちらのエリアにもテロップ（白背景化）が出ていなければ、重いAIを通さずに即終了（高速スキップ）
-            if (deathScore < 15 && killScore < 15) {
-                return false; 
+            let eventType = '';
+            let scoreStr = '';
+
+            // 一致度が85%以上なら検知とみなす（環境に合わせて微調整可能）
+            if (killScore > 85) {
+                eventType = '⚔️ キル（たおした！）';
+                scoreStr = `キル枠一致度: ${killScore.toFixed(1)}%`;
+            } else if (deathScore > 85) {
+                eventType = '💥 デス（やられた！）';
+                scoreStr = `デス枠一致度: ${deathScore.toFixed(1)}%`;
             }
 
-            // 何かが出現した時だけ、プレビューを更新して重いAI（OCR）とタイマー取得を走らせる
-            previewDeath.src = deathCanvas.toDataURL();
-            previewKill.src = killCanvas.toDataURL();
+            if (eventType !== '') {
+                const currentTimeStr = formatTime(videoPlayer.currentTime);
+                const lastLog = analysisData[analysisData.length - 1];
 
-            const timerCanvas = document.createElement('canvas');
-            timerCanvas.width = cTimer.w; timerCanvas.height = cTimer.h;
-            timerCanvas.getContext('2d').drawImage(mainCanvas, cTimer.x, cTimer.y, cTimer.w, cTimer.h, 0, 0, cTimer.w, cTimer.h);
-            const timerDataURL = timerCanvas.toDataURL();
-            previewTimer.src = timerDataURL;
+                // 重複ログの防止
+                if (!lastLog || lastLog.time !== currentTimeStr || lastLog.action !== eventType) {
+                    analysisData.push({ time: currentTimeStr, action: eventType, score: scoreStr });
 
-            try {
-                const tRes = await Tesseract.recognize(timerDataURL, 'eng', { tessedit_char_whitelist: '0123456789:' });
-                const dRes = await Tesseract.recognize(deathCanvas.toDataURL(), 'jpn');
-                const kRes = await Tesseract.recognize(killCanvas.toDataURL(), 'jpn');
-
-                const dText = dRes.data.text.replace(/\s+/g, '');
-                const kText = kRes.data.text.replace(/\s+/g, '');
-
-                let eventType = '判定なし';
-                let cleanAction = 'ー';
-
-                if (kText.includes('たおした') || kText.includes('おした') || kText.includes('とした')) {
-                    eventType = '⚔️ キル（たおした）';
-                    cleanAction = 'たおした';
-                } else if (
-                    dText.includes('やられた') || dText.includes('られた') || dText.includes('5られた') ||
-                    (dText.includes('や') && dText.includes('れた'))
-                ) {
-                    eventType = '💥 デス（やられた）';
-                    cleanAction = 'やられた';
+                    const newRow = document.createElement('tr');
+                    newRow.innerHTML = `
+                        <td><strong>${currentTimeStr}</strong></td>
+                        <td><span style="background:#eee; border-radius:4px; padding:2px 6px; font-weight:bold;">${eventType}</span></td>
+                        <td><span style="color:#666; font-size:0.9em;">${scoreStr}</span></td>
+                    `;
+                    resultBody.appendChild(newRow);
                 }
-
-                // 判定なし（ただのノイズ）じゃなければ記録
-                if (cleanAction !== 'ー') {
-                    // 直前の記録と同じ秒数かつ同じイベントなら連続重複としてスルー、違うなら追記（連続キル対応）
-                    const lastLog = analysisData[analysisData.length - 1];
-                    const currentTime = tRes.data.text.trim();
-                    if (!lastLog || lastLog.time !== currentTime || lastLog.action !== cleanAction) {
-                        analysisData.push({ time: currentTime || '不明', rawText: `上:${dText} / 下:${kText}`, action: cleanAction });
-                        const newRow = document.createElement('tr');
-                        newRow.innerHTML = `
-                            <td><strong>${currentTime || '不明'}</strong></td>
-                            <td><span style="color:#666; font-size:0.85em;">[上] ${dText}<br>[下] ${kText}</span></td>
-                            <td><span style="background:#eee; border-radius:4px; padding:2px 6px; font-weight:bold;">${cleanAction}</span> (${eventType})</td>
-                        `;
-                        resultBody.appendChild(newRow);
-                    }
-                }
-                return true;
-            } catch (e) {
-                console.error(e);
-                return false;
             }
         }
 
-        // 手動解析ボタン
-        captureBtn.addEventListener('click', async function() {
-            if (!videoPlayer.src) return alert('動画を選択してください。');
-            statusSpan.textContent = '⏳ 現在のコマを解析中...';
-            await analyzeFrame();
-            statusSpan.textContent = '✅ 解析が完了しました！';
-        });
-
-        // 🤖 自動爆速解析ボタンのイベント
+        // 超特急自動解析ボタン
         autoAnalyzeBtn.addEventListener('click', async function() {
             if (!videoPlayer.src) return alert('動画を選択してください。');
             
             if (isAnalyzing) {
                 isAnalyzing = false;
-                autoAnalyzeBtn.textContent = '🤖 動画全体を自動爆速解析';
-                statusSpan.textContent = '⏸️ 自動解析を一時停止しました。';
+                autoAnalyzeBtn.textContent = '⚡ 動画全体を超特急自動解析 (AIなし)';
+                statusSpan.textContent = '一時停止しました。';
                 return;
             }
 
             isAnalyzing = true;
             autoAnalyzeBtn.textContent = '⏹️ 解析を停止する';
             videoPlayer.pause();
-            videoPlayer.currentTime = 0; // 動画の最初からスタート
+            videoPlayer.currentTime = 0;
 
-            // 動画のシーク完了を待つための関数
             const waitForSeek = () => new Promise(resolve => videoPlayer.onseeked = resolve);
 
-            // 1秒ごとにコマ送りするループ処理
+            // 1秒刻みの超高速ループ
             while (isAnalyzing && videoPlayer.currentTime < videoPlayer.duration) {
-                const currentSec = Math.floor(videoPlayer.currentTime);
-                statusSpan.textContent = `⚡ 自動解析中: ${Math.floor(videoPlayer.currentTime / 60)}分${currentSec % 60}秒 / ${Math.floor(videoPlayer.duration / 60)}分${Math.floor(videoPlayer.duration % 60)}秒`;
+                const cur = videoPlayer.currentTime;
+                statusSpan.textContent = `🚀 超特急解析中... ${formatTime(cur)} / ${formatTime(videoPlayer.duration)}`;
 
-                // 1秒進めて、移動完了を待つ
                 await waitForSeek();
+                await analyzeFrameImageMatch();
 
-                // そのコマを解析（文字がなければ一瞬で終わる）
-                const detected = await analyzeFrame();
-                
-                if (detected) {
-                    // キル・デスを検知した場合はAIの処理待ちがあるので少し待つ
-                    await new Promise(r => setTimeout(r, 100));
-                }
-
-                // 次の1秒へ進める
-                videoPlayer.currentTime += 1.0;
+                videoPlayer.currentTime += 1.0; // 1秒進める
             }
 
             if (isAnalyzing) {
                 isAnalyzing = false;
-                autoAnalyzeBtn.textContent = '🤖 動画全体を自動爆速解析';
-                statusSpan.textContent = '🏁 すべての自動解析が完了しました！CSVを出力できます。';
+                autoAnalyzeBtn.textContent = '⚡ 動画全体を超特急自動解析 (AIなし)';
+                statusSpan.textContent = '🏁 すべての超特急解析が完了しました！爆速でしたね！';
             }
         });
 
         // CSVダウンロード
         downloadCsvBtn.addEventListener('click', function() {
             if (analysisData.length === 0) return alert('データがありません。');
-            let csv = '試合時間,認識テキスト,判定イベント\n';
-            analysisData.forEach(row => { csv += `"${row.time}","${row.rawText}","${row.action}"\n`; });
+            let csv = '経過時間,判定イベント,詳細\n';
+            analysisData.forEach(row => { csv += `"${row.time}","${row.action}","${row.score}"\n`; });
             const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
             const blob = new Blob([bom, csv], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            link.download = `splatoon_auto_log_${new Date().toISOString().slice(0,10)}.csv`;
+            link.download = `splatoon_fast_log_${new Date().toISOString().slice(0,10)}.csv`;
             link.click();
         });
     </script>
