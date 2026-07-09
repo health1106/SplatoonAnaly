@@ -249,11 +249,11 @@
             let eventType = '';
             let scoreStr = '';
 
-            // 枠が合えば跳ね上がるため、検知のしきい値を75%に設定
-            if (killScore > 75) {
+            // ノイズを回避するため、ボーダーを88%まで引き上げます
+            if (killScore > 88) {
                 eventType = '⚔️ キル（たおした！）';
                 scoreStr = `キル枠一致度: ${killScore.toFixed(1)}%`;
-            } else if (deathScore > 75) {
+            } else if (deathScore > 88) {
                 eventType = '💥 デス（やられた！）';
                 scoreStr = `デス枠一致度: ${deathScore.toFixed(1)}%`;
             }
